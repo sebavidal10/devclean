@@ -37,7 +37,7 @@ brews:
     homepage: "https://github.com/sebavidal10/devclean"
     description: "Intelligent, zero-footgun disk cleanup CLI for macOS developers"
     license: "MIT"
-    folder: "Formula"
+    directory: "Formula"
 
 changelog:
   sort: asc
