@@ -1,0 +1,49 @@
+version: 2
+
+project_name: devclean
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: devclean
+    main: ./cmd/devclean
+    binary: devclean
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+brews:
+  - name: devclean
+    repository:
+      owner: sebavidal10
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: "github-actions[bot]"
+      email: "github-actions[bot]@users.noreply.github.com"
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    homepage: "https://github.com/sebavidal10/devclean"
+    description: "Intelligent, zero-footgun disk cleanup CLI for macOS developers"
+    license: "MIT"
+    folder: "Formula"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - Merge pull request
+      - Merge branch

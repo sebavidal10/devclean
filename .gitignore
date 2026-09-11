@@ -1,0 +1,23 @@
+# Binarios y builds
+/bin/
+/dist/
+/devclean
+
+# Dependencias y herramientas
+vendor/
+
+# Archivos de entorno y logs
+*.log
+.env*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
