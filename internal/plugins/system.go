@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,7 +34,7 @@ func (s *SystemPlugin) Detect() bool {
 	return runtime.GOOS == "darwin"
 }
 
-func (s *SystemPlugin) Scan() (PluginReport, error) {
+func (s *SystemPlugin) Scan(ctx context.Context) (PluginReport, error) {
 	report := PluginReport{
 		PluginID:   s.ID(),
 		Category:   s.Category(),
@@ -54,6 +55,9 @@ func (s *SystemPlugin) Scan() (PluginReport, error) {
 	}
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return report, err
+		}
 		fullPath := filepath.Join(logsDir, entry.Name())
 		if err := IsSafePath(fullPath); err != nil {
 			continue
@@ -61,7 +65,10 @@ func (s *SystemPlugin) Scan() (PluginReport, error) {
 
 		var size int64
 		if entry.IsDir() {
-			size, _ = DirSize(fullPath)
+			size, err = DirSizeContext(ctx, fullPath)
+			if err != nil {
+				return report, err
+			}
 		} else {
 			info, err := entry.Info()
 			if err == nil {
@@ -89,7 +96,7 @@ func (s *SystemPlugin) Scan() (PluginReport, error) {
 }
 
 func (s *SystemPlugin) Clean(itemIDs []string) (int64, error) {
-	report, err := s.Scan()
+	report, err := s.Scan(context.Background())
 	if err != nil {
 		return 0, err
 	}
@@ -106,10 +113,11 @@ func (s *SystemPlugin) Clean(itemIDs []string) (int64, error) {
 			continue
 		}
 
-		if err := SafeRemoveAll(item.Path); err != nil {
+		home, _ := os.UserHomeDir()
+		if err := SafeRemoveAll(item.Path, filepath.Join(home, "Library", "Logs")); err != nil {
 			return freedBytes, fmt.Errorf("failed to clean log path %s: %w", item.Path, err)
 		}
-		freedBytes += item.SizeBytes
+		freedBytes += FreedBytesAfterCleanup(item.Path, item.SizeBytes)
 	}
 
 	return freedBytes, nil

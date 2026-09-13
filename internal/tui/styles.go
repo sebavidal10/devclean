@@ -4,6 +4,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+var Version = "dev"
+
 var (
 	// Palette Colors
 	ColorCyan    = lipgloss.Color("#00ADD8") // Primary Brand Cyan/Turquoise

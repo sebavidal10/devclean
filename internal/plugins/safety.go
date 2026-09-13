@@ -10,13 +10,15 @@ import (
 )
 
 var (
-	ErrEmptyPath         = errors.New("safety violation: path cannot be empty")
-	ErrRootPath          = errors.New("safety violation: target path cannot be system root or system directory")
-	ErrUserHomeRoot      = errors.New("safety violation: target path cannot be user home root")
-	ErrGitDirectory      = errors.New("safety violation: cannot target .git repositories")
-	ErrEnvFile           = errors.New("safety violation: cannot target environment files (.env*)")
-	ErrDatabaseFile      = errors.New("safety violation: cannot target SQLite or database files (*.db, *.sqlite*)")
-	ErrSymlinkTargetRisk = errors.New("safety violation: cannot delete symlinks targeting outside cache boundaries")
+	ErrEmptyPath          = errors.New("safety violation: path cannot be empty")
+	ErrRootPath           = errors.New("safety violation: target path cannot be system root or system directory")
+	ErrUserHomeRoot       = errors.New("safety violation: target path cannot be user home root")
+	ErrGitDirectory       = errors.New("safety violation: cannot target .git repositories")
+	ErrEnvFile            = errors.New("safety violation: cannot target environment files (.env*)")
+	ErrDatabaseFile       = errors.New("safety violation: cannot target SQLite or database files (*.db, *.sqlite*)")
+	ErrSymlinkTargetRisk  = errors.New("safety violation: cannot delete symlinks targeting outside cache boundaries")
+	ErrNoAllowedRoot      = errors.New("safety violation: at least one allowed cleanup root is required")
+	ErrOutsideAllowedRoot = errors.New("safety violation: target is outside allowed cleanup roots")
 )
 
 // protectedSystemRoots contains paths that should never under any circumstances be deleted.
@@ -95,13 +97,40 @@ func IsSafePath(p string) error {
 	return nil
 }
 
-// SafeRemoveAll validates safety requirements before executing os.RemoveAll on path.
-func SafeRemoveAll(p string) error {
+// SafeRemoveAll removes safe entries beneath an explicitly authorized cleanup root.
+// Protected descendants are preserved, and symlinks are unlinked without being followed.
+func SafeRemoveAll(p string, allowedRoots ...string) error {
 	if err := IsSafePath(p); err != nil {
 		return err
 	}
+	if len(allowedRoots) == 0 {
+		return ErrNoAllowedRoot
+	}
 
-	// Ensure path exists before attempting removal
+	target, err := filepath.Abs(p)
+	if err != nil {
+		return fmt.Errorf("failed to resolve target path %s: %w", p, err)
+	}
+	allowed := false
+	for _, root := range allowedRoots {
+		rootAbs, absErr := filepath.Abs(root)
+		if absErr != nil {
+			continue
+		}
+		rel, relErr := filepath.Rel(rootAbs, target)
+		if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("%w: %s", ErrOutsideAllowedRoot, target)
+	}
+
+	return removeSafeTree(target)
+}
+
+func removeSafeTree(p string) error {
 	info, err := os.Lstat(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -110,10 +139,29 @@ func SafeRemoveAll(p string) error {
 		return fmt.Errorf("failed to inspect path %s: %w", p, err)
 	}
 
-	// Prevent symlink escape: do not follow if symlink
-	if info.Mode()&os.ModeSymlink != 0 {
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return os.Remove(p)
 	}
 
-	return os.RemoveAll(p)
+	entries, err := os.ReadDir(p)
+	if err != nil {
+		return fmt.Errorf("failed to read directory %s: %w", p, err)
+	}
+	for _, entry := range entries {
+		child := filepath.Join(p, entry.Name())
+		if err := IsSafePath(child); err != nil {
+			continue
+		}
+		if err := removeSafeTree(child); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+		// A protected descendant intentionally leaves the directory non-empty.
+		if entries, readErr := os.ReadDir(p); readErr == nil && len(entries) > 0 {
+			return nil
+		}
+		return err
+	}
+	return nil
 }

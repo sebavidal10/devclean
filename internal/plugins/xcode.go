@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -50,7 +51,7 @@ func (x *XcodePlugin) Detect() bool {
 	return false
 }
 
-func (x *XcodePlugin) Scan() (PluginReport, error) {
+func (x *XcodePlugin) Scan(ctx context.Context) (PluginReport, error) {
 	report := PluginReport{
 		PluginID:   x.ID(),
 		Category:   x.Category(),
@@ -82,6 +83,9 @@ func (x *XcodePlugin) Scan() (PluginReport, error) {
 	}
 
 	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return report, err
+		}
 		entries, err := os.ReadDir(target.rootPath)
 		if err != nil {
 			// Directory might not exist yet, continue gracefully
@@ -89,13 +93,16 @@ func (x *XcodePlugin) Scan() (PluginReport, error) {
 		}
 
 		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return report, err
+			}
 			fullPath := filepath.Join(target.rootPath, entry.Name())
 			// Safety validation before listing
 			if err := IsSafePath(fullPath); err != nil {
 				continue
 			}
 
-			size, err := DirSize(fullPath)
+			size, err := DirSizeContext(ctx, fullPath)
 			if err != nil || size == 0 {
 				continue
 			}
@@ -118,7 +125,7 @@ func (x *XcodePlugin) Scan() (PluginReport, error) {
 }
 
 func (x *XcodePlugin) Clean(itemIDs []string) (int64, error) {
-	report, err := x.Scan()
+	report, err := x.Scan(context.Background())
 	if err != nil {
 		return 0, err
 	}
@@ -135,10 +142,15 @@ func (x *XcodePlugin) Clean(itemIDs []string) (int64, error) {
 			continue
 		}
 
-		if err := SafeRemoveAll(item.Path); err != nil {
+		home, _ := os.UserHomeDir()
+		allowedRoots := []string{
+			filepath.Join(home, "Library", "Developer", "Xcode", "DerivedData"),
+			filepath.Join(home, "Library", "Developer", "CoreSimulator", "Caches"),
+		}
+		if err := SafeRemoveAll(item.Path, allowedRoots...); err != nil {
 			return freedBytes, fmt.Errorf("failed to clean %s: %w", item.Path, err)
 		}
-		freedBytes += item.SizeBytes
+		freedBytes += FreedBytesAfterCleanup(item.Path, item.SizeBytes)
 	}
 
 	return freedBytes, nil

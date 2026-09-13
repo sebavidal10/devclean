@@ -73,7 +73,7 @@ func TestSafeRemoveAllProtection(t *testing.T) {
 	}
 
 	// Attempt SafeRemoveAll on .git
-	err = SafeRemoveAll(gitDir)
+	err = SafeRemoveAll(gitDir, tmpDir)
 	if err == nil {
 		t.Errorf("CRITICAL SAFETY FAILURE: SafeRemoveAll allowed deleting .git directory!")
 	}
@@ -92,7 +92,7 @@ func TestSafeRemoveAllProtection(t *testing.T) {
 	}
 
 	// Attempt SafeRemoveAll on .env
-	err = SafeRemoveAll(envFile)
+	err = SafeRemoveAll(envFile, tmpDir)
 	if err == nil {
 		t.Errorf("CRITICAL SAFETY FAILURE: SafeRemoveAll allowed deleting .env file!")
 	}
@@ -111,7 +111,7 @@ func TestSafeRemoveAllProtection(t *testing.T) {
 	}
 
 	// Attempt SafeRemoveAll on sqlite3
-	err = SafeRemoveAll(dbFile)
+	err = SafeRemoveAll(dbFile, tmpDir)
 	if err == nil {
 		t.Errorf("CRITICAL SAFETY FAILURE: SafeRemoveAll allowed deleting SQLite file!")
 	}
@@ -131,11 +131,102 @@ func TestSafeRemoveAllProtection(t *testing.T) {
 	cacheFile := filepath.Join(cacheDir, "temp.bin")
 	_ = os.WriteFile(cacheFile, []byte("temporary data"), 0644)
 
-	err = SafeRemoveAll(cacheDir)
+	err = SafeRemoveAll(cacheDir, tmpDir)
 	if err != nil {
 		t.Errorf("SafeRemoveAll failed on legitimate cache dir: %v", err)
 	}
 	if _, err := os.Stat(cacheDir); !os.IsNotExist(err) {
 		t.Errorf("legitimate cache dir was not deleted")
+	}
+}
+
+func TestSafeRemoveAllRequiresAllowedRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+	target := filepath.Join(tmpDir, "cache")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SafeRemoveAll(target); !errors.Is(err, ErrNoAllowedRoot) {
+		t.Fatalf("expected ErrNoAllowedRoot, got %v", err)
+	}
+	if err := SafeRemoveAll(target, filepath.Join(tmpDir, "other")); !errors.Is(err, ErrOutsideAllowedRoot) {
+		t.Fatalf("expected ErrOutsideAllowedRoot, got %v", err)
+	}
+}
+
+func TestSafeRemoveAllPreservesProtectedDescendants(t *testing.T) {
+	tmpDir := t.TempDir()
+	target := filepath.Join(tmpDir, "cache")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	protected := filepath.Join(target, ".env.local")
+	ordinary := filepath.Join(target, "rebuildable.bin")
+	if err := os.WriteFile(protected, []byte("SECRET=x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ordinary, []byte("cache"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SafeRemoveAll(target, tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(protected); err != nil {
+		t.Fatalf("protected descendant was removed: %v", err)
+	}
+	if _, err := os.Stat(ordinary); !os.IsNotExist(err) {
+		t.Fatalf("ordinary cache entry was not removed")
+	}
+}
+
+func TestSafeRemoveAllDoesNotFollowSymlinks(t *testing.T) {
+	tmpDir := t.TempDir()
+	target := filepath.Join(tmpDir, "cache")
+	external := filepath.Join(tmpDir, "external")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(external, 0755); err != nil {
+		t.Fatal(err)
+	}
+	externalFile := filepath.Join(external, "important.txt")
+	if err := os.WriteFile(externalFile, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(target, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SafeRemoveAll(target, target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(externalFile); err != nil {
+		t.Fatalf("symlink target was modified: %v", err)
+	}
+}
+
+func TestFreedBytesAfterCleanupAccountsForPreservedFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	target := filepath.Join(tmpDir, "cache")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, ".env"), []byte("1234"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "cache.bin"), []byte("123456"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := DirSize(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SafeRemoveAll(target, tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	if got := FreedBytesAfterCleanup(target, before); got != 6 {
+		t.Fatalf("freed bytes = %d; want 6", got)
 	}
 }

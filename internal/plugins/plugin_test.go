@@ -2,6 +2,8 @@ package plugins
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -15,12 +17,32 @@ type mockPlugin struct {
 	err      error
 }
 
+func TestRegistryScanAllReturnsPartialResultsAndErrorsInOrder(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(&mockPlugin{id: "z", name: "Z", detected: true, report: PluginReport{
+		PluginID: "z", Items: []ItemDetail{{ID: "b"}, {ID: "a"}},
+	}})
+	reg.Register(&mockPlugin{id: "broken", name: "Broken", detected: true, err: errors.New("boom")})
+	reg.Register(&mockPlugin{id: "a", name: "A", detected: true, report: PluginReport{PluginID: "a"}})
+
+	reports, err := reg.ScanAll(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected joined scan error, got %v", err)
+	}
+	if len(reports) != 2 || reports[0].PluginID != "a" || reports[1].PluginID != "z" {
+		t.Fatalf("reports are not sorted: %+v", reports)
+	}
+	if reports[1].Items[0].ID != "a" {
+		t.Fatalf("items are not sorted: %+v", reports[1].Items)
+	}
+}
+
 func (m *mockPlugin) ID() string         { return m.id }
 func (m *mockPlugin) Category() string   { return m.category }
 func (m *mockPlugin) Name() string       { return m.name }
 func (m *mockPlugin) SafetyNote() string { return "Mock safety note" }
 func (m *mockPlugin) Detect() bool       { return m.detected }
-func (m *mockPlugin) Scan() (PluginReport, error) {
+func (m *mockPlugin) Scan(context.Context) (PluginReport, error) {
 	return m.report, m.err
 }
 func (m *mockPlugin) Clean(itemIDs []string) (int64, error) {
@@ -96,9 +118,13 @@ type slowMockPlugin struct {
 	mockPlugin
 }
 
-func (s *slowMockPlugin) Scan() (PluginReport, error) {
-	time.Sleep(100 * time.Millisecond)
-	return PluginReport{}, nil
+func (s *slowMockPlugin) Scan(ctx context.Context) (PluginReport, error) {
+	select {
+	case <-time.After(100 * time.Millisecond):
+		return PluginReport{}, nil
+	case <-ctx.Done():
+		return PluginReport{}, ctx.Err()
+	}
 }
 
 func TestRegistryScanAllTimeout(t *testing.T) {

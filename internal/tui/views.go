@@ -24,7 +24,7 @@ func (m Model) renderHeader() string {
 	b.WriteString("\n")
 
 	// Subtitle & Sponsor Credit
-	b.WriteString(SubtitleStyle.Render("v0.1.0 · Intelligent Cleaner for macOS Developers"))
+	b.WriteString(SubtitleStyle.Render(Version + " · Intelligent Cleaner for macOS Developers"))
 	b.WriteString("  ")
 	b.WriteString(AuthorSponsorStyle.Render("by @sebavidal10 (github.com/sponsors/sebavidal10)"))
 	b.WriteString("\n\n")
@@ -256,9 +256,13 @@ func (m Model) viewSummary() string {
 
 	b.WriteString(BannerStyle.Render(banner))
 	b.WriteString("\n")
-	b.WriteString(SubtitleStyle.Render("v0.1.0 · Intelligent Cleaner for macOS Developers\n\n"))
+	b.WriteString(SubtitleStyle.Render(Version + " · Intelligent Cleaner for macOS Developers\n\n"))
 
-	header := SuccessTitle.Render("✨ ¡Limpieza completada con éxito!")
+	headerText := "✨ ¡Limpieza completada con éxito!"
+	if m.err != nil {
+		headerText = "⚠ Limpieza completada parcialmente"
+	}
+	header := SuccessTitle.Render(headerText)
 	freedMetric := RecoveredStat.Render(disk.FormatBytes(uint64(m.freedBytes))) + " recuperados"
 
 	summaryText := fmt.Sprintf(
@@ -270,8 +274,11 @@ func (m Model) viewSummary() string {
 	if m.initialDisk != nil && m.finalDisk != nil {
 		summaryText += "\n" + m.renderDotDiskComparison(m.initialDisk, m.finalDisk)
 	}
+	if m.err != nil {
+		summaryText += "\n" + lipgloss.NewStyle().Foreground(ColorYellow).Render("Problemas encontrados: "+m.err.Error()) + "\n"
+	}
 
-	summaryText += "\n" + SafetyText.Render("Zero-Footgun Guarantee: Tus proyectos, dependencias y datos persistentes están intactos.")
+	summaryText += "\n" + SafetyText.Render("Zero-Footgun Guarantee: Tus proyectos, configuraciones y datos persistentes están intactos.")
 	summaryText += "\n\n" + SponsorCallout.Render("❤ ¿Te fue útil devclean? Considera apoyar el proyecto en github.com/sponsors/sebavidal10")
 
 	b.WriteString(FocusedCard.Render(summaryText))

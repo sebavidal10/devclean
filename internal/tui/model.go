@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -50,20 +51,21 @@ func (c *CategoryItem) SelectedCount() int {
 }
 
 type Model struct {
-	state         AppState
-	registry      *plugins.Registry
-	initialDisk   *disk.DiskStats
-	finalDisk     *disk.DiskStats
-	spinner       spinner.Model
-	categories    []CategoryItem
-	cursor        int
-	itemCursor    int
-	cleanStatus   string
-	freedBytes    int64
-	err           error
-	width         int
-	height        int
-	statusMessage string
+	state          AppState
+	registry       *plugins.Registry
+	initialDisk    *disk.DiskStats
+	finalDisk      *disk.DiskStats
+	spinner        spinner.Model
+	categories     []CategoryItem
+	cursor         int
+	itemCursor     int
+	cleanStatus    string
+	freedBytes     int64
+	err            error
+	width          int
+	height         int
+	statusMessage  string
+	confirmPending bool
 }
 
 func NewModel(reg *plugins.Registry) Model {
@@ -127,10 +129,12 @@ func (m Model) startScanCmd() tea.Cmd {
 func (m Model) startCleanCmd() tea.Cmd {
 	return func() tea.Msg {
 		var totalFreed int64
+		var cleanErrors []error
 
 		for _, cat := range m.categories {
 			plugin := m.registry.Find(cat.Report.PluginID)
 			if plugin == nil {
+				cleanErrors = append(cleanErrors, fmt.Errorf("plugin %q is no longer registered", cat.Report.PluginID))
 				continue
 			}
 
@@ -148,14 +152,20 @@ func (m Model) startCleanCmd() tea.Cmd {
 			freed, err := plugin.Clean(toClean)
 			if err == nil {
 				totalFreed += freed
+			} else {
+				totalFreed += freed
+				cleanErrors = append(cleanErrors, fmt.Errorf("%s: %w", cat.Report.Title, err))
 			}
 		}
 
-		finalStats, err := disk.GetDiskUsage("/")
+		finalStats, diskErr := disk.GetDiskUsage("/")
+		if diskErr != nil {
+			cleanErrors = append(cleanErrors, diskErr)
+		}
 		return cleanFinishedMsg{
 			freedBytes: totalFreed,
 			finalDisk:  finalStats,
-			err:        err,
+			err:        errors.Join(cleanErrors...),
 		}
 	}
 }
@@ -199,14 +209,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.state = StateSelection
 		m.cursor = 0
+		if msg.err != nil {
+			m.statusMessage = "El escaneo fue parcial: " + msg.err.Error()
+		}
 		return m, nil
 
 	case cleanFinishedMsg:
-		if msg.err != nil {
-			m.err = msg.err
-			m.state = StateError
-			return m, nil
-		}
+		m.err = msg.err
 		m.freedBytes = msg.freedBytes
 		m.finalDisk = msg.finalDisk
 		m.state = StateSummary
@@ -240,6 +249,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() != "c" && m.confirmPending {
+		m.confirmPending = false
+		m.statusMessage = "Confirmación cancelada porque cambió la selección o navegación."
+	}
 	switch msg.String() {
 	case "q":
 		return m, tea.Quit
@@ -296,6 +309,12 @@ func (m Model) updateSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if !m.confirmPending {
+			m.confirmPending = true
+			m.statusMessage = "Presiona c nuevamente para confirmar la eliminación de los elementos seleccionados."
+			return m, nil
+		}
+		m.confirmPending = false
 		m.state = StateCleaning
 		m.cleanStatus = "Ejecutando limpieza segura de artefactos y cachés..."
 		return m, tea.Batch(m.spinner.Tick, m.startCleanCmd())

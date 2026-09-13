@@ -2,10 +2,12 @@ package plugins
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -36,7 +38,7 @@ type CleanerPlugin interface {
 	Name() string
 	SafetyNote() string
 	Detect() bool
-	Scan() (PluginReport, error)
+	Scan(context.Context) (PluginReport, error)
 	Clean(itemIDs []string) (freedBytes int64, err error)
 }
 
@@ -110,21 +112,11 @@ func (r *Registry) ScanAll(ctx context.Context) ([]PluginReport, error) {
 		go func(plugin CleanerPlugin) {
 			defer wg.Done()
 
-			// Channel to capture plugin Scan() completion
-			done := make(chan scanResult, 1)
-			go func() {
-				rep, err := plugin.Scan()
-				done <- scanResult{report: rep, err: err}
-			}()
-
-			select {
-			case <-ctx.Done():
-				resultCh <- scanResult{
-					err: fmt.Errorf("scan canceled for %s: %w", plugin.Name(), ctx.Err()),
-				}
-			case res := <-done:
-				resultCh <- res
+			rep, err := plugin.Scan(ctx)
+			if err != nil {
+				err = fmt.Errorf("scan %s: %w", plugin.Name(), err)
 			}
+			resultCh <- scanResult{report: rep, err: err}
 		}(p)
 	}
 
@@ -135,30 +127,42 @@ func (r *Registry) ScanAll(ctx context.Context) ([]PluginReport, error) {
 	}()
 
 	var reports []PluginReport
-	var firstErr error
+	var scanErrors []error
 
 	for res := range resultCh {
 		if res.err != nil {
-			if firstErr == nil {
-				firstErr = res.err
-			}
+			scanErrors = append(scanErrors, res.err)
 			continue
 		}
+		sort.Slice(res.report.Items, func(i, j int) bool {
+			return res.report.Items[i].ID < res.report.Items[j].ID
+		})
 		reports = append(reports, res.report)
 	}
+	sort.Slice(reports, func(i, j int) bool {
+		return reports[i].PluginID < reports[j].PluginID
+	})
 
 	if ctx.Err() != nil {
 		return reports, ctx.Err()
 	}
 
-	return reports, firstErr
+	return reports, errors.Join(scanErrors...)
 }
 
 // DirSize safely computes the total bytes of all files in a directory tree without following symlinks.
 // It skips .git directories and avoids reading forbidden file types.
 func DirSize(root string) (int64, error) {
+	return DirSizeContext(context.Background(), root)
+}
+
+// DirSizeContext is DirSize with cooperative cancellation for large trees.
+func DirSizeContext(ctx context.Context, root string) (int64, error) {
 	var total int64
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err != nil {
 			// Skip permission denied or inaccessible files gracefully
 			return nil
@@ -189,4 +193,19 @@ func PathAgeDays(path string) int {
 		return 0
 	}
 	return days
+}
+
+// FreedBytesAfterCleanup calculates actual reclaimed bytes when protected descendants remain.
+func FreedBytesAfterCleanup(path string, before int64) int64 {
+	after, err := DirSize(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return before
+		}
+		return 0
+	}
+	if after >= before {
+		return 0
+	}
+	return before - after
 }

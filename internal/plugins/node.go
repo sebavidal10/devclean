@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 type NodePlugin struct {
 	workspaceDir string
+	inactiveDays int
 }
 
 func NewNodePlugin() *NodePlugin {
@@ -18,7 +20,15 @@ func NewNodePlugin() *NodePlugin {
 	ws := filepath.Join(home, "Workspace")
 	return &NodePlugin{
 		workspaceDir: ws,
+		inactiveDays: 30,
 	}
+}
+
+func NewNodePluginWithConfig(workspaceDir string, inactiveDays int) *NodePlugin {
+	if inactiveDays < 1 {
+		inactiveDays = 30
+	}
+	return &NodePlugin{workspaceDir: workspaceDir, inactiveDays: inactiveDays}
 }
 
 func (n *NodePlugin) ID() string {
@@ -34,7 +44,7 @@ func (n *NodePlugin) Name() string {
 }
 
 func (n *NodePlugin) SafetyNote() string {
-	return "Removes inactive node_modules (>30 days untouched) and global npm cache. Reinstallable with 'npm install' or 'pnpm install'."
+	return fmt.Sprintf("Removes node_modules unchanged for at least %d days and the global npm cache. Dependencies are reinstallable.", n.inactiveDays)
 }
 
 func (n *NodePlugin) Detect() bool {
@@ -54,7 +64,7 @@ func (n *NodePlugin) Detect() bool {
 	return false
 }
 
-func (n *NodePlugin) Scan() (PluginReport, error) {
+func (n *NodePlugin) Scan(ctx context.Context) (PluginReport, error) {
 	report := PluginReport{
 		PluginID:   n.ID(),
 		Category:   n.Category(),
@@ -72,7 +82,10 @@ func (n *NodePlugin) Scan() (PluginReport, error) {
 	npmCache := filepath.Join(home, ".npm")
 	if info, err := os.Stat(npmCache); err == nil && info.IsDir() {
 		if err := IsSafePath(npmCache); err == nil {
-			size, _ := DirSize(npmCache)
+			size, sizeErr := DirSizeContext(ctx, npmCache)
+			if sizeErr != nil {
+				return report, sizeErr
+			}
 			if size > 0 {
 				age := PathAgeDays(npmCache)
 				report.Items = append(report.Items, ItemDetail{
@@ -95,8 +108,11 @@ func (n *NodePlugin) Scan() (PluginReport, error) {
 
 	if info, err := os.Stat(wsDir); err == nil && info.IsDir() {
 		// Walk with strict guard: do not recurse into .git or deeper into found node_modules
-		_ = filepath.WalkDir(wsDir, func(path string, d fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
+		walkErr := filepath.WalkDir(wsDir, func(path string, d fs.DirEntry, entryErr error) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if entryErr != nil {
 				return nil
 			}
 
@@ -117,9 +133,11 @@ func (n *NodePlugin) Scan() (PluginReport, error) {
 					modTime := dirInfo.ModTime()
 					days := int(time.Since(modTime).Hours() / 24)
 
-					// Only target if older than 30 days
-					if days >= 30 {
-						size, _ := DirSize(path)
+					if days >= n.inactiveDays {
+						size, sizeErr := DirSizeContext(ctx, path)
+						if sizeErr != nil {
+							return sizeErr
+						}
 						if size > 0 {
 							report.Items = append(report.Items, ItemDetail{
 								ID:          "node-modules:" + path,
@@ -139,13 +157,16 @@ func (n *NodePlugin) Scan() (PluginReport, error) {
 
 			return nil
 		})
+		if walkErr != nil {
+			return report, walkErr
+		}
 	}
 
 	return report, nil
 }
 
 func (n *NodePlugin) Clean(itemIDs []string) (int64, error) {
-	report, err := n.Scan()
+	report, err := n.Scan(context.Background())
 	if err != nil {
 		return 0, err
 	}
@@ -162,10 +183,19 @@ func (n *NodePlugin) Clean(itemIDs []string) (int64, error) {
 			continue
 		}
 
-		if err := SafeRemoveAll(item.Path); err != nil {
+		allowedRoot := n.workspaceDir
+		if allowedRoot == "" {
+			home, _ := os.UserHomeDir()
+			allowedRoot = filepath.Join(home, "Workspace")
+		}
+		if id == "npm-cache" {
+			allowedRoot, _ = os.UserHomeDir()
+			allowedRoot = filepath.Join(allowedRoot, ".npm")
+		}
+		if err := SafeRemoveAll(item.Path, allowedRoot); err != nil {
 			return freedBytes, fmt.Errorf("failed to clean %s: %w", item.Path, err)
 		}
-		freedBytes += item.SizeBytes
+		freedBytes += FreedBytesAfterCleanup(item.Path, item.SizeBytes)
 	}
 
 	return freedBytes, nil

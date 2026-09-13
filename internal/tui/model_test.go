@@ -1,11 +1,28 @@
 package tui
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sebavidal10/devclean/internal/plugins"
 )
+
+type failingCleanPlugin struct{}
+
+func (*failingCleanPlugin) ID() string         { return "failing" }
+func (*failingCleanPlugin) Category() string   { return "Test" }
+func (*failingCleanPlugin) Name() string       { return "Failing plugin" }
+func (*failingCleanPlugin) SafetyNote() string { return "Test only" }
+func (*failingCleanPlugin) Detect() bool       { return true }
+func (*failingCleanPlugin) Scan(context.Context) (plugins.PluginReport, error) {
+	return plugins.PluginReport{}, nil
+}
+func (*failingCleanPlugin) Clean([]string) (int64, error) {
+	return 128, errors.New("permission denied")
+}
 
 func TestTUIModelInitialization(t *testing.T) {
 	m := NewModel(nil)
@@ -16,6 +33,40 @@ func TestTUIModelInitialization(t *testing.T) {
 	view := m.View()
 	if view == "" {
 		t.Errorf("view should not be empty during scanning")
+	}
+}
+
+func TestTUICleanupRequiresConfirmationAndReportsPartialFailure(t *testing.T) {
+	reg := plugins.NewRegistry()
+	reg.Register(&failingCleanPlugin{})
+	m := NewModel(reg)
+	report := plugins.PluginReport{
+		PluginID: "failing", Title: "Failing plugin", TotalBytes: 256,
+		Items: []plugins.ItemDetail{{ID: "one", SizeBytes: 256}},
+	}
+	updated, _ := m.Update(scanFinishedMsg{reports: []plugins.PluginReport{report}})
+	m = updated.(Model)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(Model)
+	if m.state != StateSelection || !m.confirmPending || cmd != nil {
+		t.Fatalf("first c must request confirmation")
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(Model)
+	if m.state != StateCleaning || cmd == nil {
+		t.Fatalf("second c must start cleanup")
+	}
+
+	msg := m.startCleanCmd()().(cleanFinishedMsg)
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+	if m.state != StateSummary || m.freedBytes != 128 || m.err == nil {
+		t.Fatalf("expected partial summary, got state=%v freed=%d err=%v", m.state, m.freedBytes, m.err)
+	}
+	if !strings.Contains(m.View(), "completada parcialmente") {
+		t.Fatalf("partial failure is not visible in summary")
 	}
 }
 

@@ -54,7 +54,7 @@ type dockerDFEntry struct {
 	Reclaimable string `json:"Reclaimable"`
 }
 
-func (d *DockerPlugin) Scan() (PluginReport, error) {
+func (d *DockerPlugin) Scan(parent context.Context) (PluginReport, error) {
 	report := PluginReport{
 		PluginID:   d.ID(),
 		Category:   d.Category(),
@@ -63,7 +63,7 @@ func (d *DockerPlugin) Scan() (PluginReport, error) {
 		Items:      make([]ItemDetail, 0),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 
 	// Run safe inspection command: docker system df --format "{{json .}}"
@@ -119,6 +119,9 @@ func (d *DockerPlugin) Scan() (PluginReport, error) {
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return report, fmt.Errorf("read docker system df output: %w", err)
+	}
 
 	return report, nil
 }
@@ -141,13 +144,12 @@ func (d *DockerPlugin) Clean(itemIDs []string) (int64, error) {
 		return false
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
 	// 1. Prune dangling images ONLY (NO -a flag)
 	if hasItem("docker-images-dangling") {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		cmd := exec.CommandContext(ctx, "docker", "image", "prune", "-f")
 		out, err := cmd.Output()
+		cancel()
 		if err != nil {
 			return totalFreed, fmt.Errorf("failed to prune dangling docker images: %w", err)
 		}
@@ -156,8 +158,10 @@ func (d *DockerPlugin) Clean(itemIDs []string) (int64, error) {
 
 	// 2. Prune builder cache ONLY
 	if hasItem("docker-builder-cache") {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		cmd := exec.CommandContext(ctx, "docker", "builder", "prune", "-f")
 		out, err := cmd.Output()
+		cancel()
 		if err != nil {
 			return totalFreed, fmt.Errorf("failed to prune docker builder cache: %w", err)
 		}
@@ -193,7 +197,7 @@ func ParseHumanBytes(s string) int64 {
 		return 0
 	}
 
-	re := regexp.MustCompile(`^([0-9\.]+)\s*([a-zA-Z]+)$`)
+	re := regexp.MustCompile(`^(\d+(?:\.\d+)?)\s*([a-zA-Z]+)$`)
 	matches := re.FindStringSubmatch(s)
 	if len(matches) < 3 {
 		return 0
@@ -210,16 +214,24 @@ func ParseHumanBytes(s string) int64 {
 	switch unit {
 	case "B":
 		multiplier = 1
-	case "KB", "KIB", "K":
+	case "KB", "K":
 		multiplier = 1000
-	case "MB", "MIB", "M":
+	case "KIB":
+		multiplier = 1024
+	case "MB", "M":
 		multiplier = 1000 * 1000
-	case "GB", "GIB", "G":
+	case "MIB":
+		multiplier = 1024 * 1024
+	case "GB", "G":
 		multiplier = 1000 * 1000 * 1000
-	case "TB", "TIB", "T":
+	case "GIB":
+		multiplier = 1024 * 1024 * 1024
+	case "TB", "T":
 		multiplier = 1000 * 1000 * 1000 * 1000
+	case "TIB":
+		multiplier = 1024 * 1024 * 1024 * 1024
 	default:
-		multiplier = 1
+		return 0
 	}
 
 	return int64(val * multiplier)
