@@ -33,7 +33,7 @@ v0.1.0 · Intelligent Cleaner for macOS Developers by @sebavidal10
 
 ## ✨ Features
 
-- 🛡️ **Zero-Footgun Philosophy:** Operates strictly with user privileges (no `sudo` required). Never touches persistent Docker volumes, `.git/` trees, `.env*` secrets, or SQLite databases.
+- 🛡️ **Zero-Footgun Philosophy:** Operates strictly with user privileges (no `sudo` required). Cleanup is restricted to plugin-specific cache roots; protected `.git/`, `.env*`, and SQLite descendants are preserved.
 - ⚡ **Concurrent Engine:** Fast parallel scanning powered by Go goroutines and native macOS APFS syscalls (`unix.Statfs`).
 - 🖥️ **Interactive Terminal UI:** Built with [Charm](https://charm.sh)'s **Bubble Tea**, **Lip Gloss**, and **Bubbles**. Inspect granular details before deleting a single byte.
 - 🔍 **Granular Drill-down:** Expand any category to see individual paths, ages, and sizes, allowing selective cleanup.
@@ -117,6 +117,15 @@ Need a quick report or running in a CI pipeline? Use `--scan` or `--no-tui`:
 devclean --scan
 ```
 
+For machine-readable output and configurable Node.js scanning:
+
+```bash
+devclean --json
+devclean --scan --workspace "$HOME/Projects" --inactive-days 60
+```
+
+Interactive cleanup requires pressing `c` twice: once to review the warning and once to confirm deletion.
+
 Output:
 
 ```text
@@ -191,6 +200,8 @@ Run the full test suite across all packages:
 ```bash
 go test -v ./...
 ```
+
+Pull requests also run formatting checks, `go vet`, race-enabled tests, a build, and GoReleaser configuration validation in CI.
 
 ---
 

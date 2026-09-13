@@ -12,6 +12,7 @@ import (
 
 type NodePlugin struct {
 	workspaceDir string
+	npmCacheDir  string
 	inactiveDays int
 }
 
@@ -20,6 +21,7 @@ func NewNodePlugin() *NodePlugin {
 	ws := filepath.Join(home, "Workspace")
 	return &NodePlugin{
 		workspaceDir: ws,
+		npmCacheDir:  filepath.Join(home, ".npm"),
 		inactiveDays: 30,
 	}
 }
@@ -28,7 +30,8 @@ func NewNodePluginWithConfig(workspaceDir string, inactiveDays int) *NodePlugin 
 	if inactiveDays < 1 {
 		inactiveDays = 30
 	}
-	return &NodePlugin{workspaceDir: workspaceDir, inactiveDays: inactiveDays}
+	home, _ := os.UserHomeDir()
+	return &NodePlugin{workspaceDir: workspaceDir, npmCacheDir: filepath.Join(home, ".npm"), inactiveDays: inactiveDays}
 }
 
 func (n *NodePlugin) ID() string {
@@ -79,7 +82,10 @@ func (n *NodePlugin) Scan(ctx context.Context) (PluginReport, error) {
 	}
 
 	// 1. Scan global npm cache (~/.npm)
-	npmCache := filepath.Join(home, ".npm")
+	npmCache := n.npmCacheDir
+	if npmCache == "" {
+		npmCache = filepath.Join(home, ".npm")
+	}
 	if info, err := os.Stat(npmCache); err == nil && info.IsDir() {
 		if err := IsSafePath(npmCache); err == nil {
 			size, sizeErr := DirSizeContext(ctx, npmCache)
@@ -189,8 +195,11 @@ func (n *NodePlugin) Clean(itemIDs []string) (int64, error) {
 			allowedRoot = filepath.Join(home, "Workspace")
 		}
 		if id == "npm-cache" {
-			allowedRoot, _ = os.UserHomeDir()
-			allowedRoot = filepath.Join(allowedRoot, ".npm")
+			allowedRoot = n.npmCacheDir
+			if allowedRoot == "" {
+				allowedRoot, _ = os.UserHomeDir()
+				allowedRoot = filepath.Join(allowedRoot, ".npm")
+			}
 		}
 		if err := SafeRemoveAll(item.Path, allowedRoot); err != nil {
 			return freedBytes, fmt.Errorf("failed to clean %s: %w", item.Path, err)
