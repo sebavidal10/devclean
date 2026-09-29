@@ -127,3 +127,30 @@ func TestTUISelectionAndDrilldown(t *testing.T) {
 		t.Fatalf("expected state StateSelection after b, got %v", m.state)
 	}
 }
+
+func TestTUIResponsiveWidth(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	fakeReports := []plugins.PluginReport{
+		{
+			PluginID: "xcode",
+			Category: "Apple Development",
+			Title:    "Xcode DerivedData",
+			Items: []plugins.ItemDetail{
+				{
+					ID:          "long-item",
+					Description: "Xcode DerivedData: Runner-avxwjvguzcjixcaynccqqarleiwa",
+					SizeBytes:   1024,
+					LastModDays: 5,
+				},
+			},
+		},
+	}
+	updated, _ := m.Update(scanFinishedMsg{reports: fakeReports})
+	m = updated.(Model)
+	m.state = StateDrillDown
+	view := m.View()
+	if !strings.Contains(view, "Xcode DerivedData: Runner-avxwjvguzcjixcaynccqqarleiwa") {
+		t.Errorf("long description should not be truncated on wide terminal, got:\n%s", view)
+	}
+}
