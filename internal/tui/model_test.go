@@ -153,4 +153,7 @@ func TestTUIResponsiveWidth(t *testing.T) {
 	if !strings.Contains(view, "Xcode DerivedData: Runner-avxwjvguzcjixcaynccqqarleiwa") {
 		t.Errorf("long description should not be truncated on wide terminal, got:\n%s", view)
 	}
+	if strings.Contains(view, "\nKiB") || strings.Contains(view, "\nGiB") {
+		t.Errorf("size units should not wrap to line 2, got:\n%s", view)
+	}
 }

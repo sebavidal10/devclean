@@ -16,16 +16,21 @@ const banner = `
   ██████╔╝███████╗ ╚████╔╝ ╚██████╗███████╗███████╗██║  ██║██║ ╚████║
   ╚═════╝ ╚══════╝  ╚═══╝   ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝`
 
-// cardInnerWidth calculates responsive inner width for cards based on terminal window dimensions.
-func (m Model) cardInnerWidth() int {
-	w := m.width - 6
-	if w < 74 {
-		return 74
+// cardWidth calculates total outer width for cards based on terminal window dimensions.
+func (m Model) cardWidth() int {
+	w := m.width - 4
+	if w < 78 {
+		return 78
 	}
 	if w > 160 {
 		return 160
 	}
 	return w
+}
+
+// cardContentWidth returns the usable content width inside a card (accounting for border and padding).
+func (m Model) cardContentWidth() int {
+	return m.cardWidth() - 4
 }
 
 func (m Model) renderHeader() string {
@@ -51,13 +56,16 @@ func (m Model) renderHeader() string {
 }
 
 func (m Model) renderDiskBar(d *disk.DiskStats, label string) string {
-	innerW := m.cardInnerWidth()
-	barWidth := innerW - 54
-	if barWidth < 20 {
-		barWidth = 20
+	cardW := m.cardWidth()
+	contentW := m.cardContentWidth()
+
+	// Available width for bar: contentW minus text elements (~88 chars with margins)
+	barWidth := contentW - 88
+	if barWidth < 12 {
+		barWidth = 12
 	}
-	if barWidth > 50 {
-		barWidth = 50
+	if barWidth > 45 {
+		barWidth = 45
 	}
 
 	usedSlots := int((d.UsedPercentage / 100.0) * float64(barWidth))
@@ -82,20 +90,20 @@ func (m Model) renderDiskBar(d *disk.DiskStats, label string) string {
 		d.TotalString(),
 	)
 
-	return BoxCard.Copy().Width(innerW).Render(cardContent)
+	return BoxCard.Copy().Width(cardW).Render(cardContent)
 }
 
 func (m Model) viewScanning() string {
 	var b strings.Builder
 	b.WriteString(m.renderHeader())
-	innerW := m.cardInnerWidth()
+	cardW := m.cardWidth()
 
 	spinBox := fmt.Sprintf(
 		"%s Escaneando entornos activos en paralelo (Docker, Xcode, Node, System)...\n%s",
 		m.spinner.View(),
 		SafetyText.Render("Analizando DerivedData, simuladores, Docker (imágenes huérfanas y build cache), npm y logs sin alterar datos persistentes."),
 	)
-	b.WriteString(FocusedCard.Copy().Width(innerW).Render(spinBox))
+	b.WriteString(FocusedCard.Copy().Width(cardW).Render(spinBox))
 	b.WriteString("\n")
 
 	return b.String()
@@ -104,10 +112,11 @@ func (m Model) viewScanning() string {
 func (m Model) viewSelection() string {
 	var b strings.Builder
 	b.WriteString(m.renderHeader())
-	innerW := m.cardInnerWidth()
+	cardW := m.cardWidth()
+	contentW := m.cardContentWidth()
 
 	if len(m.categories) == 0 {
-		emptyBox := BoxCard.Copy().Width(innerW).Render("No se detectaron artefactos de compilación ni cachés descartables.\n¡Tu Mac está reluciente!")
+		emptyBox := BoxCard.Copy().Width(cardW).Render("No se detectaron artefactos de compilación ni cachés descartables.\n¡Tu Mac está reluciente!")
 		b.WriteString(emptyBox)
 		b.WriteString("\n\n" + m.renderFooter("q: Salir"))
 		return b.String()
@@ -142,9 +151,9 @@ func (m Model) viewSelection() string {
 
 		// Dynamic spacing: calculate space between category title and right metadata (size + count)
 		rightPartLen := len(sizeStr) + 2 + len(selectedCount)
-		availTitleW := innerW - 6 - rightPartLen - 2
-		if availTitleW < 24 {
-			availTitleW = 24
+		availTitleW := contentW - 6 - rightPartLen - 4
+		if availTitleW < 20 {
+			availTitleW = 20
 		}
 
 		titlePad := ""
@@ -170,9 +179,9 @@ func (m Model) viewSelection() string {
 
 		itemBlock := headerLine + "\n" + safetyLine
 
-		cardStyle := BoxCard.Copy().Width(innerW)
+		cardStyle := BoxCard.Copy().Width(cardW)
 		if isCursor {
-			cardStyle = FocusedCard.Copy().Width(innerW)
+			cardStyle = FocusedCard.Copy().Width(cardW)
 		}
 		b.WriteString(cardStyle.Render(itemBlock))
 		b.WriteString("\n")
@@ -213,7 +222,8 @@ func (m Model) viewDrillDown() string {
 	}
 
 	cat := &m.categories[m.cursor]
-	innerW := m.cardInnerWidth()
+	cardW := m.cardWidth()
+	contentW := m.cardContentWidth()
 
 	title := fmt.Sprintf("Detalle de Categoría: %s (%d items - %s seleccionados)",
 		cat.Report.Title,
@@ -224,10 +234,10 @@ func (m Model) viewDrillDown() string {
 	b.WriteString("\n\n")
 
 	// Calculate responsive column width for item description
-	// Fixed columns: cursor (2) + check (4) + spacing (2) + age (10) + spacing (2) + size (12) = 32
-	descWidth := innerW - 32
-	if descWidth < 30 {
-		descWidth = 30
+	// Fixed columns: cursor (2) + check (4) + spacing (2) + age (10) + spacing (2) + size (12) + margin (4) = 36
+	descWidth := contentW - 36
+	if descWidth < 25 {
+		descWidth = 25
 	}
 
 	var listBuilder strings.Builder
@@ -284,7 +294,7 @@ func (m Model) viewDrillDown() string {
 	}
 
 	cardContent := strings.TrimRight(listBuilder.String(), "\n")
-	b.WriteString(BoxCard.Copy().Width(innerW).Render(cardContent))
+	b.WriteString(BoxCard.Copy().Width(cardW).Render(cardContent))
 	b.WriteString("\n\n")
 
 	keys := []string{
@@ -303,7 +313,7 @@ func (m Model) viewDrillDown() string {
 func (m Model) viewCleaning() string {
 	var b strings.Builder
 	b.WriteString(m.renderHeader())
-	innerW := m.cardInnerWidth()
+	cardW := m.cardWidth()
 
 	spinBox := fmt.Sprintf(
 		"%s %s\n\n%s",
@@ -311,7 +321,7 @@ func (m Model) viewCleaning() string {
 		CategoryTitleFocused.Render(m.cleanStatus),
 		SafetyText.Render("Zero-Footgun: Ejecutando en espacio de usuario. Nunca se alteran repositorios .git ni variables de entorno."),
 	)
-	b.WriteString(FocusedCard.Copy().Width(innerW).Render(spinBox))
+	b.WriteString(FocusedCard.Copy().Width(cardW).Render(spinBox))
 	b.WriteString("\n")
 
 	return b.String()
@@ -319,7 +329,7 @@ func (m Model) viewCleaning() string {
 
 func (m Model) viewSummary() string {
 	var b strings.Builder
-	innerW := m.cardInnerWidth()
+	cardW := m.cardWidth()
 
 	b.WriteString(BannerStyle.Render(banner))
 	b.WriteString("\n")
@@ -348,7 +358,7 @@ func (m Model) viewSummary() string {
 	summaryText += "\n" + SafetyText.Render("Zero-Footgun Guarantee: Tus proyectos, configuraciones y datos persistentes están intactos.")
 	summaryText += "\n\n" + SponsorCallout.Render("❤ ¿Te fue útil devclean? Considera apoyar el proyecto en github.com/sponsors/sebavidal10")
 
-	b.WriteString(FocusedCard.Copy().Width(innerW).Render(summaryText))
+	b.WriteString(FocusedCard.Copy().Width(cardW).Render(summaryText))
 	b.WriteString("\n\n")
 
 	b.WriteString(KeyStyle.Render("Presiona [q] o [Enter] para salir."))
@@ -358,8 +368,8 @@ func (m Model) viewSummary() string {
 }
 
 func (m Model) renderDotDiskComparison(before, after *disk.DiskStats) string {
-	innerW := m.cardInnerWidth()
-	dotWidth := (innerW - 40) / 2
+	contentW := m.cardContentWidth()
+	dotWidth := (contentW - 40) / 2
 	if dotWidth < 15 {
 		dotWidth = 15
 	}
@@ -369,7 +379,7 @@ func (m Model) renderDotDiskComparison(before, after *disk.DiskStats) string {
 
 	makeDots := func(d *disk.DiskStats) string {
 		usedDots := int((d.UsedPercentage / 100.0) * float64(dotWidth))
-		if usedDots > dotWidth {
+		if usedSlots := usedDots; usedSlots > dotWidth {
 			usedDots = dotWidth
 		}
 		freeDots := dotWidth - usedDots
