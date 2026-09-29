@@ -49,7 +49,7 @@ v0.1.0 · Intelligent Cleaner for macOS Developers by @sebavidal10
 | Xcode `DerivedData` & Simulator caches | Source code & `.git/` repositories |
 | Inactive `node_modules` (>30 days untouched) | Active project dependencies |
 | Global npm cache (`~/.npm`) | Environment files (`.env*`, `.env.local`) |
-| Docker dangling layers & build cache | Persistent Docker volumes & running containers |
+| Docker build cache & unused images (zero container links) | Persistent Docker volumes (linked databases) & containers |
 | macOS user application logs (`~/Library/Logs`) | SQLite & local databases (`*.db`, `*.sqlite*`) |
 
 ---
@@ -152,8 +152,9 @@ JavaScript & Node.js  • Node.js & NPM
   - Xcode rebuilds these automatically on your next compile.
 
 - **Containers & Virtualization (`docker.go`):**
-  - Runs safe `docker image prune -f` and `docker builder prune -f`.
-  - **Strict rule:** Never passes `-a` and **never** calls `docker volume prune`.
+  - Granularly scans BuildKit builder cache and unlinked/dangling images with zero container attachments.
+  - Drill-down allows inspecting and selectively deleting individual unlinked images without `--force`.
+  - **Strict rule:** **Never** touches persistent volumes (`docker volume prune` is strictly prohibited) and preserves all container configurations and active/stopped database containers (Postgres, Mongo, etc.).
 
 - **Web & JavaScript (`node.go`):**
   - Scans global `~/.npm` cache.

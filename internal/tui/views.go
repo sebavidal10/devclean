@@ -72,7 +72,7 @@ func (m Model) viewScanning() string {
 	spinBox := fmt.Sprintf(
 		"%s Escaneando entornos activos en paralelo (Docker, Xcode, Node, System)...\n%s",
 		m.spinner.View(),
-		SafetyText.Render("Analizando DerivedData, simuladores, Docker dangling, npm y logs sin alterar datos persistentes."),
+		SafetyText.Render("Analizando DerivedData, simuladores, Docker (imágenes huérfanas y build cache), npm y logs sin alterar datos persistentes."),
 	)
 	b.WriteString(FocusedCard.Render(spinBox))
 	b.WriteString("\n")
